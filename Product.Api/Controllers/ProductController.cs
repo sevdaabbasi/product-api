@@ -1,136 +1,116 @@
 using Microsoft.AspNetCore.Mvc;
+using Product.Api.Attributes;
 using Product.Api.Domain;
+using Product.Api.Domain.Interfaces;
 
-namespace Product.Api.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class ProductController : ControllerBase
+namespace Product.Api.Controllers
 {
-    private static List<ProductEntity> _products = new List<ProductEntity>();
-    private static int _nextId = 1;
-
-    [HttpGet]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<IEnumerable<ProductEntity>> GetAll()
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authenticate]
+    public class ProductController : ControllerBase
     {
-        return Ok(_products);
-    }
+        private readonly IProductService _productService;
+        private readonly ILogger<ProductController> _logger;
 
-    [HttpGet("{id}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult<ProductEntity> GetById(int id)
-    {
-        var product = _products.FirstOrDefault(p => p.Id == id);
-        if (product == null)
+        public ProductController(IProductService productService, ILogger<ProductController> logger)
         {
-            return NotFound();
-        }
-        return Ok(product);
-    }
-
-    [HttpGet("list")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<IEnumerable<ProductEntity>> GetFiltered([FromQuery] string name = null, [FromQuery] string sortBy = "name")
-    {
-        var query = _products.AsQueryable();
-
-        if (!string.IsNullOrEmpty(name))
-        {
-            query = query.Where(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+            _productService = productService;
+            _logger = logger;
         }
 
-        query = sortBy.ToLower() switch
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<ProductEntity>>> GetAll()
         {
-            "price" => query.OrderBy(p => p.Price),
-            "stock" => query.OrderBy(p => p.Stock),
-            _ => query.OrderBy(p => p.Name)
-        };
-
-        return Ok(query.ToList());
-    }
-
-    [HttpPost]
-    [ProducesResponseType(StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public ActionResult<ProductEntity> Create([FromBody] ProductEntity product)
-    {
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(ModelState);
+            var products = await _productService.GetAllProductsAsync();
+            return Ok(products);
         }
 
-        product.Id = _nextId++;
-        product.CreatedAt = DateTime.UtcNow;
-        _products.Add(product);
-
-        return CreatedAtAction(nameof(GetById), new { id = product.Id }, product);
-    }
-
-    [HttpPut("{id}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult Update(int id, [FromBody] ProductEntity product)
-    {
-        if (!ModelState.IsValid)
+        [HttpGet("{id}")]
+        public async Task<ActionResult<ProductEntity>> GetById(int id)
         {
-            return BadRequest(ModelState);
-        }
-
-        var existingProduct = _products.FirstOrDefault(p => p.Id == id);
-        if (existingProduct == null)
-        {
-            return NotFound();
-        }
-
-        existingProduct.Name = product.Name;
-        existingProduct.Description = product.Description;
-        existingProduct.Price = product.Price;
-        existingProduct.Stock = product.Stock;
-        existingProduct.UpdatedAt = DateTime.UtcNow;
-
-        return NoContent();
-    }
-
-    [HttpPatch("{id}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult PartialUpdate(int id, [FromBody] Dictionary<string, object> updates)
-    {
-        var product = _products.FirstOrDefault(p => p.Id == id);
-        if (product == null)
-        {
-            return NotFound();
-        }
-
-        foreach (var update in updates)
-        {
-            var property = typeof(ProductEntity).GetProperty(update.Key, System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-            if (property != null)
+            var product = await _productService.GetProductByIdAsync(id);
+            if (product == null)
             {
-                property.SetValue(product, Convert.ChangeType(update.Value, property.PropertyType));
+                return NotFound();
             }
+            return Ok(product);
         }
 
-        product.UpdatedAt = DateTime.UtcNow;
-        return NoContent();
-    }
-
-    [HttpDelete("{id}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult Delete(int id)
-    {
-        var product = _products.FirstOrDefault(p => p.Id == id);
-        if (product == null)
+        [HttpGet("list")]
+        public async Task<ActionResult<IEnumerable<ProductEntity>>> GetFiltered([FromQuery] string name = null, [FromQuery] string sortBy = "name")
         {
-            return NotFound();
+            var products = await _productService.GetAllProductsAsync();
+            var query = products.AsQueryable();
+
+            if (!string.IsNullOrEmpty(name))
+            {
+                query = query.Where(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
+            }
+
+            query = sortBy.ToLower() switch
+            {
+                "price" => query.OrderBy(p => p.Price),
+                "stock" => query.OrderBy(p => p.Stock),
+                _ => query.OrderBy(p => p.Name)
+            };
+
+            return Ok(query.ToList());
         }
 
-        _products.Remove(product);
-        return NoContent();
+        [HttpPost]
+        public async Task<ActionResult<ProductEntity>> Create(ProductEntity product)
+        {
+            var createdProduct = await _productService.CreateProductAsync(product);
+            return CreatedAtAction(nameof(GetById), new { id = createdProduct.Id }, createdProduct);
+        }
+
+        [HttpPut("{id}")]
+        public async Task<IActionResult> Update(int id, ProductEntity product)
+        {
+            var updatedProduct = await _productService.UpdateProductAsync(id, product);
+            if (updatedProduct == null)
+            {
+                return NotFound();
+            }
+            return Ok(updatedProduct);
+        }
+
+        [HttpPatch("{id}")]
+        public async Task<IActionResult> PartialUpdate(int id, [FromBody] Dictionary<string, object> updates)
+        {
+            var existingProduct = await _productService.GetProductByIdAsync(id);
+            if (existingProduct == null)
+            {
+                return NotFound();
+            }
+
+            foreach (var update in updates)
+            {
+                var property = typeof(ProductEntity).GetProperty(update.Key, 
+                    System.Reflection.BindingFlags.IgnoreCase | 
+                    System.Reflection.BindingFlags.Public | 
+                    System.Reflection.BindingFlags.Instance);
+                
+                if (property != null)
+                {
+                    property.SetValue(existingProduct, Convert.ChangeType(update.Value, property.PropertyType));
+                }
+            }
+
+            var updatedProduct = await _productService.UpdateProductAsync(id, existingProduct);
+            return Ok(updatedProduct);
+        }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(int id)
+        {
+            var result = await _productService.DeleteProductAsync(id);
+            if (!result)
+            {
+                return NotFound();
+            }
+            return NoContent();
+        }
     }
 } 
